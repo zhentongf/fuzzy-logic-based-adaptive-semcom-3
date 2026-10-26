@@ -1,0 +1,42 @@
+# Entry-point switches
+run:
+  train: false
+  evaluate: true
+  seed: 2026
+  device: auto                 # auto, cpu, cuda
+
+data:
+  root: data                   # CIFAR-10 is downloaded here on first use
+  eval_csv: data/sim_conditions.csv
+  eval_samples: 100            # use the first 100 CIFAR-10 test images
+
+model:
+  channel_uses: 16             # Deep-JSCC c; latent contains 2*c channels
+  checkpoint: outputs/checkpoints/deep_jscc.pt
+
+train:
+  snr_db: 10.0                 # requested training SNR
+  epochs: 50
+  batch_size: 64
+  learning_rate: 0.001
+  num_workers: 0
+
+channel:
+  nakagami_m: 2.0
+  path_loss_exponent: 2.2
+  reference_distance_m: 1.0
+
+fuzzy:
+  semantic_threshold: 0.50     # semantic is selected when score < threshold
+
+output:
+  directory: outputs
+
+eval_plot:
+  enabled: true
+  directory: graphs
+  eval_results: outputs/adaptive_evaluation_20261026_231413.csv
+  # Filters are inclusive; change these values for a different controlled slice.
+  snr_db_range: [7.5, 12.5]
+  distance_m_range: [150.0, 250.0]
+  bandwidth_bps_range: [375.0, 625.0]
