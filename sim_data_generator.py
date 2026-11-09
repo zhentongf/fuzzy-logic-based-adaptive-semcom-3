@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 
 
-def generate_conditions(output_csv: str | Path, count: int = 100, seed: int = 2026) -> Path:
+def generate_conditions(output_csv: str | Path, count: int = 10_000, seed: int = 2026) -> Path:
     rng = np.random.default_rng(seed)
     # Independent uniform draws give every value in each specified range the
     # same probability of appearing in the simulated link-condition dataset.
@@ -24,7 +24,7 @@ def generate_conditions(output_csv: str | Path, count: int = 100, seed: int = 20
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", default="data/sim_conditions.csv")
-    parser.add_argument("--count", type=int, default=1000)
+    parser.add_argument("--count", type=int, default=10_000)
     parser.add_argument("--seed", type=int, default=2026)
     args = parser.parse_args()
     print(f"Saved {args.count} conditions to {generate_conditions(args.output, args.count, args.seed)}")

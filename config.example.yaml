@@ -15,7 +15,8 @@ model:
   checkpoint: outputs/checkpoints/deep_jscc.pt
 
 train:
-  snr_db: 10.0                 # requested training SNR
+  snr_db: 10.0                 # fallback only, for legacy configurations
+  dynamic_snr_db: [11, 12, 13, 14, 15, 16, 17, 18, 19, 20]  # one value per epoch, cyclic
   epochs: 50
   batch_size: 64
   learning_rate: 0.001
@@ -23,11 +24,11 @@ train:
 
 channel:
   nakagami_m: 2.0
-  path_loss_exponent: 2.2
+  path_loss_exponent: 0.5     # adds loss by distance^exponent
   reference_distance_m: 1.0
 
 fuzzy:
-  semantic_threshold: 0.50     # semantic is selected when score < threshold
+  semantic_threshold: 0.50     # semantic is selected when quality score is below this threshold
 
 output:
   directory: outputs
@@ -35,8 +36,4 @@ output:
 eval_plot:
   enabled: true
   directory: graphs
-  eval_results: outputs/adaptive_evaluation_20261026_231413.csv
-  # Filters are inclusive; change these values for a different controlled slice.
-  snr_db_range: [7.5, 12.5]
-  distance_m_range: [150.0, 250.0]
-  bandwidth_bps_range: [375.0, 625.0]
+  eval_results: outputs/adaptive_evaluation_20261109_124327.csv

@@ -16,7 +16,7 @@ class NakagamiChannel(nn.Module):
     """
 
     def __init__(self, snr_db: float, m: float = 2.0,
-                 path_loss_exponent: float = 2.2,
+                 path_loss_exponent: float = 0.01,
                  reference_distance_m: float = 1.0):
         super().__init__()
         if m <= 0 or path_loss_exponent <= 0 or reference_distance_m <= 0:

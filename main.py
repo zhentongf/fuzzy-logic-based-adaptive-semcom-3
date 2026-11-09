@@ -22,7 +22,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Adaptive fuzzy-logic vehicular semantic communication experiment")
     parser.add_argument("--config", required=True, help="YAML configuration file")
     parser.add_argument("--generate-csv", action="store_true", help="Generate the configured condition CSV then exit")
-    parser.add_argument("--csv-count", type=int, default=100, help="Rows generated with --generate-csv")
+    parser.add_argument("--csv-count", type=int, default=10_000, help="Rows generated with --generate-csv")
     args = parser.parse_args()
     config = load_config(args.config)
     if args.generate_csv:

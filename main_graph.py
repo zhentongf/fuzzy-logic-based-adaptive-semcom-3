@@ -5,6 +5,7 @@ import argparse
 import yaml
 
 from eval_plotting import plot_evaluation_csv
+from eval_plotting_2 import plot_distance_by_snr_csv
 
 
 def load_graph_config(path: str) -> dict:
@@ -19,7 +20,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Plot adaptive-evaluation CSV results")
     parser.add_argument("--config", required=True, help="YAML configuration file")
     args = parser.parse_args()
-    plot_evaluation_csv(load_graph_config(args.config))
+    config = load_graph_config(args.config)
+    plot_evaluation_csv(config)
+    plot_distance_by_snr_csv(config)
 
 
 if __name__ == "__main__":

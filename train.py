@@ -35,8 +35,14 @@ def train_model(config: dict) -> Path:
     loader = DataLoader(dataset, batch_size=train_cfg["batch_size"], shuffle=True,
                         num_workers=train_cfg.get("num_workers", 0), pin_memory=device.type == "cuda")
     model = DeepJSCC(model_cfg["channel_uses"]).to(device)
-    channel = NakagamiChannel(train_cfg["snr_db"], channel_cfg["nakagami_m"],
-                              channel_cfg["path_loss_exponent"], channel_cfg["reference_distance_m"]).to(device)
+    # Cycle through the configured SNR values, changing the channel once per epoch.
+    # ``snr_db`` remains a fallback for older configuration files.
+    training_snrs = train_cfg.get("dynamic_snr_db")
+    if training_snrs is None:
+        training_snrs = [train_cfg["snr_db"]]
+    if not isinstance(training_snrs, list) or not training_snrs:
+        raise ValueError("train.dynamic_snr_db must be a non-empty list of SNR values.")
+    training_snrs = [float(snr) for snr in training_snrs]
     optimizer = torch.optim.Adam(model.parameters(), lr=train_cfg["learning_rate"])
     criterion = nn.MSELoss()
     output_dir = Path(config["output"]["directory"])
@@ -44,9 +50,13 @@ def train_model(config: dict) -> Path:
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     log_path = output_dir / f"train_log_{timestamp}.csv"
     with log_path.open("w", newline="", encoding="utf-8") as log_file:
-        csv.writer(log_file).writerow(["epoch", "mse"])
+        csv.writer(log_file).writerow(["epoch", "snr_db", "mse"])
     model.train()
     for epoch in range(1, int(train_cfg["epochs"]) + 1):
+        epoch_snr_db = training_snrs[(epoch - 1) % len(training_snrs)]
+        channel = NakagamiChannel(epoch_snr_db, channel_cfg["nakagami_m"],
+                                  channel_cfg["path_loss_exponent"],
+                                  channel_cfg["reference_distance_m"]).to(device)
         total_loss = 0.0
         for images, _ in loader:
             images = images.to(device, non_blocking=True)
@@ -58,12 +68,12 @@ def train_model(config: dict) -> Path:
             total_loss += loss.item() * images.size(0)
         epoch_mse = total_loss / len(dataset)
         with log_path.open("a", newline="", encoding="utf-8") as log_file:
-            csv.writer(log_file).writerow([epoch, f"{epoch_mse:.10f}"])
-        print(f"Epoch {epoch:03d}/{train_cfg['epochs']} | MSE: {epoch_mse:.6f}")
+            csv.writer(log_file).writerow([epoch, f"{epoch_snr_db:.6f}", f"{epoch_mse:.10f}"])
+        print(f"Epoch {epoch:03d}/{train_cfg['epochs']} | SNR: {epoch_snr_db:g} dB | MSE: {epoch_mse:.6f}")
     checkpoint = Path(model_cfg["checkpoint"])
     checkpoint.parent.mkdir(parents=True, exist_ok=True)
     torch.save({"model_state": model.state_dict(), "channel_uses": model_cfg["channel_uses"],
-                "training_snr_db": train_cfg["snr_db"], "channel": channel_cfg}, checkpoint)
+                "training_snr_db": training_snrs, "channel": channel_cfg}, checkpoint)
     print(f"Saved semantic model: {checkpoint}")
     print(f"Saved training log: {log_path}")
     return checkpoint

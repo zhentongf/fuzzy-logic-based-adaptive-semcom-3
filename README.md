@@ -12,10 +12,10 @@ Deep-JSCC 网络结构改编自 [chunbaobao/Deep-JSCC-PyTorch](https://github.co
 
 ## 运行
 
-安装依赖后，先生成 100 行链路条件（每列为截断正态随机样本，并排序分层后随机打散，减少过度集中）：
+安装依赖后，先生成默认的 10,000 行均匀随机链路条件：
 
 ```powershell
-python main.py --config config.example.yaml --generate-csv --csv-count 100
+python main.py --config config.example.yaml --generate-csv
 ```
 
 然后训练并评估：
@@ -24,8 +24,8 @@ python main.py --config config.example.yaml --generate-csv --csv-count 100
 python main.py --config config.example.yaml
 ```
 
-训练始终使用完整 CIFAR-10 训练集；评估使用 CIFAR-10 测试集前 `eval_samples` 张图像。每一行条件 CSV 代表一个独立链路状态，并在该状态下传输全部 `eval_samples` 张图像，保存平均 MSE 与平均 PSNR。首次运行时 `torchvision` 会下载 CIFAR-10。训练日志保存为带时间戳的 `outputs/train_log_*.csv`，评估结果保存为带时间戳的 `outputs/adaptive_evaluation_*.csv`。
+训练始终使用完整 CIFAR-10 训练集，并按 `train.dynamic_snr_db` 每个 epoch 更换一次 SNR、循环使用；评估使用 CIFAR-10 测试集前 `eval_samples` 张图像。每一行条件 CSV 代表一个独立链路状态，并在该状态下传输全部 `eval_samples` 张图像，保存平均 MSE 与平均 PSNR。结果同时包含 `adaptive`、`all_direct`（全部直接传输）与 `all_semantic`（全部语义传输）三种 `transmission_mode`。首次运行时 `torchvision` 会下载 CIFAR-10。训练日志保存为带时间戳的 `outputs/train_log_*.csv`，评估结果保存为带时间戳的 `outputs/adaptive_evaluation_*.csv`。
 
 绘图与训练/评估分离。将 `eval_plot.eval_results` 修改为目标评估 CSV 后，运行 `main_graph.py` 生成 PSNR 三联图。
 
-在 YAML 中修改 `run.train`、`run.evaluate`、`train.snr_db` 和 `data.eval_csv` 即可满足不同实验设置。若只评估已有模型，将 `run.train: false`，并使 `model.checkpoint` 指向现有模型即可。
+在 YAML 中修改 `run.train`、`run.evaluate`、`train.dynamic_snr_db` 和 `data.eval_csv` 即可满足不同实验设置。若只评估已有模型，将 `run.train: false`，并使 `model.checkpoint` 指向现有模型即可。
