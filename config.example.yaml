@@ -24,7 +24,7 @@ train:
 
 channel:
   nakagami_m: 2.0
-  path_loss_exponent: 0.5     # adds loss by distance^exponent
+  training_path_loss_exponent: 2.2
   reference_distance_m: 1.0
 
 fuzzy:
@@ -36,4 +36,4 @@ output:
 eval_plot:
   enabled: true
   directory: graphs
-  eval_results: outputs/adaptive_evaluation_20261109_124327.csv
+  eval_results: outputs/adaptive_evaluation_20261109_222926.csv

@@ -35,6 +35,7 @@ def train_model(config: dict) -> Path:
     loader = DataLoader(dataset, batch_size=train_cfg["batch_size"], shuffle=True,
                         num_workers=train_cfg.get("num_workers", 0), pin_memory=device.type == "cuda")
     model = DeepJSCC(model_cfg["channel_uses"]).to(device)
+    training_path_loss_exponent = float(channel_cfg["training_path_loss_exponent"])
     # Cycle through the configured SNR values, changing the channel once per epoch.
     # ``snr_db`` remains a fallback for older configuration files.
     training_snrs = train_cfg.get("dynamic_snr_db")
@@ -55,7 +56,7 @@ def train_model(config: dict) -> Path:
     for epoch in range(1, int(train_cfg["epochs"]) + 1):
         epoch_snr_db = training_snrs[(epoch - 1) % len(training_snrs)]
         channel = NakagamiChannel(epoch_snr_db, channel_cfg["nakagami_m"],
-                                  channel_cfg["path_loss_exponent"],
+                                  training_path_loss_exponent,
                                   channel_cfg["reference_distance_m"]).to(device)
         total_loss = 0.0
         for images, _ in loader:
