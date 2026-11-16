@@ -6,6 +6,7 @@ import yaml
 
 from eval_plotting import plot_evaluation_csv
 from eval_plotting_2 import plot_distance_by_snr_csv
+from fuzzy_plotting import plot_fuzzy_visualizations
 
 
 def load_graph_config(path: str) -> dict:
@@ -21,6 +22,7 @@ def main() -> None:
     parser.add_argument("--config", required=True, help="YAML configuration file")
     args = parser.parse_args()
     config = load_graph_config(args.config)
+    plot_fuzzy_visualizations(config)
     plot_evaluation_csv(config)
     plot_distance_by_snr_csv(config)
 

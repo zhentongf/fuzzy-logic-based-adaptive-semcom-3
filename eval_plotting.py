@@ -5,7 +5,9 @@ from datetime import datetime
 from pathlib import Path
 
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
+from scipy import stats
 
 
 TRANSMISSION_MODES = ("adaptive", "all_direct", "all_semantic")
@@ -19,6 +21,19 @@ MODE_COLORS = {
     "all_direct": "#2ca02c",
     "all_semantic": "#d62728",
 }
+# 圆圈、方块、五角星
+MODE_MARKERS = {
+    "adaptive": "o",
+    "all_direct": "s",
+    "all_semantic": "*",
+}
+# 五角星看起来比其他标记小，适当放大
+MODE_MARKERSIZES = {
+    "adaptive": 5,
+    "all_direct": 5,
+    "all_semantic": 9,
+}
+CONFIDENCE_LEVEL = 0.95
 
 
 def _validate_results(frame: pd.DataFrame) -> None:
@@ -31,10 +46,20 @@ def _validate_results(frame: pd.DataFrame) -> None:
         )
 
 
+def _confidence_halfwidth(values: pd.Series, confidence: float = CONFIDENCE_LEVEL) -> float:
+    """Half-width of the t-based confidence interval of the mean."""
+    values = values.dropna()
+    n = len(values)
+    if n < 2:
+        return np.nan
+    sem = values.std(ddof=1) / np.sqrt(n)
+    return float(stats.t.ppf((1 + confidence) / 2, n - 1) * sem)
+
+
 def binned_mode_means(
     frame: pd.DataFrame, x_column: str, bin_edges: list[float]
-) -> tuple[list[float], dict[str, pd.Series]]:
-    """Return one mean PSNR value per bin for each transmission mode.
+) -> tuple[list[float], dict[str, pd.Series], dict[str, pd.Series]]:
+    """Return per-bin mean PSNR and confidence-interval half-width for each mode.
 
     Bins are left-inclusive, except that the final bin also includes its upper
     endpoint. Thus, for example, SNR bins are [0, 2), ..., [18, 20].
@@ -46,27 +71,36 @@ def binned_mode_means(
     bins.loc[frame[x_column] == bin_edges[-1]] = labels[-1]
     centers = [(low + high) / 2 for low, high in zip(bin_edges[:-1], bin_edges[1:])]
     means: dict[str, pd.Series] = {}
+    ci_halfwidths: dict[str, pd.Series] = {}
     for mode in TRANSMISSION_MODES:
         selected = frame.loc[frame["transmission_mode"] == mode].copy()
         selected["_bin"] = bins.loc[selected.index]
-        means[mode] = selected.groupby("_bin", observed=False)["mean_psnr_db"].mean().reindex(labels)
-    return centers, means
+        grouped = selected.groupby("_bin", observed=False)["mean_psnr_db"]
+        means[mode] = grouped.mean().reindex(labels)
+        ci_halfwidths[mode] = grouped.apply(_confidence_halfwidth).reindex(labels)
+    return centers, means, ci_halfwidths
 
 
 def draw_binned_modes(
     ax: plt.Axes, frame: pd.DataFrame, x_column: str, bin_edges: list[float], title: str, x_label: str
 ) -> None:
-    """Draw one ten-point PSNR curve for each transmission mode."""
-    centers, mode_means = binned_mode_means(frame, x_column, bin_edges)
+    """Draw one ten-point PSNR curve (with 95% CI band) for each transmission mode."""
+    centers, mode_means, mode_ci = binned_mode_means(frame, x_column, bin_edges)
     for mode in TRANSMISSION_MODES:
-        ax.plot(centers, mode_means[mode], "o-", linewidth=1.8, markersize=4,
-                color=MODE_COLORS[mode], label=MODE_LABELS[mode])
+        mean = mode_means[mode].to_numpy(dtype=float)
+        ci = mode_ci[mode].to_numpy(dtype=float)
+        color = MODE_COLORS[mode]
+        ax.plot(centers, mean, linestyle="-", linewidth=1.8,
+                marker=MODE_MARKERS[mode], markersize=MODE_MARKERSIZES[mode],
+                color=color, label=MODE_LABELS[mode])
+        # 样本数不足的 bin 的 ci 为 NaN，fill_between 会在该处自动断开
+        ax.fill_between(centers, mean - ci, mean + ci, color=color, alpha=0.2, linewidth=0)
     ax.set_title(title)
     ax.set_xlabel(x_label)
     ax.set_ylabel("Average PSNR (dB)")
     ax.set_xticks(centers)
     ax.grid(True, alpha=0.3)
-    ax.legend(fontsize=8)
+    ax.legend(fontsize=8, title=f"{int(CONFIDENCE_LEVEL * 100)}% CI shaded", title_fontsize=7)
 
 
 def plot_evaluation_csv(config: dict) -> Path:

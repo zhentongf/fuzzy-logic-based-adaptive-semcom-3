@@ -68,7 +68,15 @@ def psnr(reference: torch.Tensor, reconstruction: torch.Tensor) -> float:
     return 10.0 * np.log10(1.0 / max(mse, 1e-12))
 
 
-def evaluate(config: dict) -> pd.DataFrame:
+def _checkpoint_path(base_checkpoint: Path, channel_uses: int) -> Path:
+    """Return the per-channel-use checkpoint path used by ``train.py``."""
+    return base_checkpoint.with_name(
+        f"{base_checkpoint.stem}_c{channel_uses}{base_checkpoint.suffix}"
+    )
+
+
+def evaluate(config: dict) -> dict[int, pd.DataFrame]:
+    """Evaluate every configured channel-use model and save one CSV per model."""
     set_seed(int(config["run"]["seed"]))
     device = get_device(config["run"].get("device", "auto"))
     data_cfg, model_cfg, channel_cfg = config["data"], config["model"], config["channel"]
@@ -81,54 +89,99 @@ def evaluate(config: dict) -> pd.DataFrame:
     images, _ = next(iter(DataLoader(Subset(test_set, range(limit)), batch_size=limit, shuffle=False)))
     images = images.to(device)
 
-    checkpoint_path = Path(model_cfg["checkpoint"])
-    if not checkpoint_path.exists():
-        raise FileNotFoundError(f"No checkpoint at {checkpoint_path}. Set run.train=true or provide a trained model.")
-    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
-    model = DeepJSCC(int(checkpoint["channel_uses"])).to(device)
-    model.load_state_dict(checkpoint["model_state"])
-    model.eval()
+    channel_uses_values = model_cfg.get("channel_uses")
+    if not isinstance(channel_uses_values, list) or not channel_uses_values:
+        raise ValueError("model.channel_uses must be a non-empty list of positive integers.")
+    channel_uses_values = [int(value) for value in channel_uses_values]
+    if any(value <= 0 for value in channel_uses_values):
+        raise ValueError("model.channel_uses must contain only positive integers.")
+    if len(set(channel_uses_values)) != len(channel_uses_values):
+        raise ValueError("model.channel_uses must not contain duplicate values.")
+
+    base_checkpoint = Path(model_cfg["checkpoint"])
+    checkpoint_paths = {
+        channel_uses: _checkpoint_path(base_checkpoint, channel_uses)
+        for channel_uses in channel_uses_values
+    }
+    missing_checkpoints = [str(path) for path in checkpoint_paths.values() if not path.exists()]
+    if missing_checkpoints:
+        raise FileNotFoundError(
+            "Missing per-channel-use checkpoints: " + ", ".join(missing_checkpoints)
+            + ". Set run.train=true or provide all trained models."
+        )
+
     controller = FuzzyTransmissionController(config["fuzzy"].get("semantic_threshold", 0.5))
     direct_exponents, semantic_exponents = load_path_loss_exponents()
     # Keep adaptive selection and add fixed baselines for every link condition.
     # This makes the three transmission strategies directly comparable in one CSV.
     transmission_modes = ("adaptive", "all_direct", "all_semantic")
-    results: list[dict] = []
-    with torch.no_grad():
-        for index, condition in enumerate(conditions.to_dict("records")):
-            decision = controller.decide(float(condition["snr_db"]), float(condition["distance_m"]),
-                                         float(condition["bandwidth_bps"]))
-            for transmission_mode in transmission_modes:
-                method = (decision["method"] if transmission_mode == "adaptive"
-                          else "direct" if transmission_mode == "all_direct" else "semantic")
-                path_loss_exponent, distance_band = path_loss_exponent_for_distance(
-                    semantic_exponents if method == "semantic" else direct_exponents,
-                    float(condition["distance_m"]),
-                )
-                channel = NakagamiChannel(float(condition["snr_db"]), channel_cfg["nakagami_m"],
-                                          path_loss_exponent,
-                                          channel_cfg["reference_distance_m"]).to(device)
-                if method == "semantic":
-                    received = model(images, channel, float(condition["distance_m"]))
-                else:
-                    received = channel(images, float(condition["distance_m"])).clamp(0.0, 1.0)
-                image_mse = (images - received).square().mean(dim=(1, 2, 3))
-                image_psnr = 10.0 * torch.log10(1.0 / image_mse.clamp_min(1e-12))
-                row = {"sample_id": int(condition.get("sample_id", index)), **condition, **decision,
-                       "transmission_mode": transmission_mode, "method": method,
-                       "distance_band": distance_band,
-                       "path_loss_exponent": path_loss_exponent,
-                       "effective_snr_db": channel.effective_snr_db(float(condition["distance_m"])),
-                       "transmitted_images": limit, "mean_mse": image_mse.mean().item(),
-                       "mean_psnr_db": image_psnr.mean().item()}
-                results.append(row)
-    result_frame = pd.DataFrame(results)
     output_dir = Path(config["output"]["directory"])
     output_dir.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    result_path = output_dir / f"adaptive_evaluation_{timestamp}.csv"
-    result_frame.to_csv(result_path, index=False, float_format="%.6f")
-    print(f"Evaluated {len(conditions)} link conditions × {len(transmission_modes)} transmission modes × {limit} images.")
-    print(f"Mean condition PSNR: {result_frame.mean_psnr_db.mean():.4f} dB")
-    print(f"Saved per-condition results: {result_path}")
-    return result_frame
+    evaluated_frames: dict[int, pd.DataFrame] = {}
+
+    for channel_uses, checkpoint_path in checkpoint_paths.items():
+        # Reset the random stream so all model variants see comparable channel noise.
+        set_seed(int(config["run"]["seed"]))
+        checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
+        checkpoint_channel_uses = int(checkpoint["channel_uses"])
+        if checkpoint_channel_uses != channel_uses:
+            raise ValueError(
+                f"Checkpoint {checkpoint_path} contains channel_uses={checkpoint_channel_uses}, "
+                f"but channel_uses={channel_uses} was requested."
+            )
+        model = DeepJSCC(channel_uses).to(device)
+        model.load_state_dict(checkpoint["model_state"])
+        model.eval()
+
+        # Bandwidth utilization is the number of transmitted real-valued semantic
+        # features divided by the number of values in the uncompressed RGB image.
+        with torch.no_grad():
+            encoded_example = model.encoder(images[:1])
+        semantic_bandwidth_utilization = encoded_example.numel() / images[:1].numel()
+
+        results: list[dict] = []
+        with torch.no_grad():
+            for index, condition in enumerate(conditions.to_dict("records")):
+                decision = controller.decide(float(condition["snr_db"]), float(condition["distance_m"]),
+                                             float(condition["bandwidth_bps"]))
+                for transmission_mode in transmission_modes:
+                    method = (decision["method"] if transmission_mode == "adaptive"
+                              else "direct" if transmission_mode == "all_direct" else "semantic")
+                    path_loss_exponent, distance_band = path_loss_exponent_for_distance(
+                        semantic_exponents if method == "semantic" else direct_exponents,
+                        float(condition["distance_m"]),
+                    )
+                    channel = NakagamiChannel(float(condition["snr_db"]), channel_cfg["nakagami_m"],
+                                              path_loss_exponent,
+                                              channel_cfg["reference_distance_m"]).to(device)
+                    if method == "semantic":
+                        received = model(images, channel, float(condition["distance_m"]))
+                        bandwidth_utilization = semantic_bandwidth_utilization
+                    else:
+                        received = channel(images, float(condition["distance_m"])).clamp(0.0, 1.0)
+                        bandwidth_utilization = 1.0
+                    image_mse = (images - received).square().mean(dim=(1, 2, 3))
+                    image_psnr = 10.0 * torch.log10(1.0 / image_mse.clamp_min(1e-12))
+                    row = {"sample_id": int(condition.get("sample_id", index)), **condition, **decision,
+                           "channel_uses": channel_uses,
+                           "transmission_mode": transmission_mode, "method": method,
+                           "bandwidth_utilization": bandwidth_utilization,
+                           "distance_band": distance_band,
+                           "path_loss_exponent": path_loss_exponent,
+                           "effective_snr_db": channel.effective_snr_db(float(condition["distance_m"])),
+                           "transmitted_images": limit, "mean_mse": image_mse.mean().item(),
+                           "mean_psnr_db": image_psnr.mean().item()}
+                    results.append(row)
+
+        result_frame = pd.DataFrame(results)
+        result_path = output_dir / f"adaptive_evaluation_c{channel_uses}_{timestamp}.csv"
+        result_frame.to_csv(result_path, index=False, float_format="%.6f")
+        evaluated_frames[channel_uses] = result_frame
+        print(f"Evaluated channel_uses={channel_uses}: {len(conditions)} link conditions × "
+              f"{len(transmission_modes)} transmission modes × {limit} images.")
+        print(f"Semantic bandwidth utilization: {semantic_bandwidth_utilization:.6f}")
+        print(f"Mean condition PSNR: {result_frame.mean_psnr_db.mean():.4f} dB")
+        print(f"Saved per-condition results: {result_path}")
+
+    return evaluated_frames

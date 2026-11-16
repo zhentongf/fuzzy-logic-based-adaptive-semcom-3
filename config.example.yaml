@@ -11,7 +11,7 @@ data:
   eval_samples: 100            # use the first 100 CIFAR-10 test images
 
 model:
-  channel_uses: 16             # Deep-JSCC c; latent contains 2*c channels
+  channel_uses: [4, 8, 12, 16] # train one Deep-JSCC model for each c value
   checkpoint: outputs/checkpoints/deep_jscc.pt
 
 train:
